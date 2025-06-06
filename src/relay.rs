@@ -86,6 +86,10 @@ impl Relay {
                 } else {
                     // This is a real-time update, broadcast immediately
                     self.broadcast_to_clients(line).await;
+                    
+                    // Update the snapshot buffer with the latest data
+                    // Parse the line to extract key information for updating snapshot
+                    self.update_snapshot_with_new_data(line).await;
                 }
             }
         }
@@ -226,5 +230,46 @@ impl Relay {
         
         info!("Initial snapshot sent to client {}", client_id);
         true
+    }
+
+    async fn update_snapshot_with_new_data(&self, line: &str) {
+        // Parse the line to extract key information for updating snapshot
+        // Assuming the data format is tab-separated with instrument_id and symbol as first columns
+        // Format: instrument_id\tsymbol\tnet_position\tlatest_price\tmarket_value\tavg_cost_basis\ttheoretical_pnl
+        
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() < 2 {
+            debug!("Skipping line with insufficient columns: {}", line);
+            return;
+        }
+        
+        let instrument_id = parts[0];
+        let symbol = parts[1];
+        
+        // Update the snapshot buffer by replacing the row for this instrument/symbol
+        {
+            let mut buffer = self.snapshot_buffer.lock().await;
+            
+            // Find and replace existing row for this instrument/symbol
+            let mut found = false;
+            for existing_row in buffer.iter_mut() {
+                let existing_parts: Vec<&str> = existing_row.split('\t').collect();
+                if existing_parts.len() >= 2 
+                    && existing_parts[0] == instrument_id 
+                    && existing_parts[1] == symbol {
+                    // Replace the existing row with the new data
+                    *existing_row = line.to_string();
+                    found = true;
+                    debug!("Updated snapshot row for instrument {} ({})", instrument_id, symbol);
+                    break;
+                }
+            }
+            
+            // If not found, append as new row (new instrument/symbol)
+            if !found {
+                buffer.push(line.to_string());
+                debug!("Added new snapshot row for instrument {} ({})", instrument_id, symbol);
+            }
+        }
     }
 } 
